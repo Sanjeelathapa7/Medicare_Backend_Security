@@ -10,6 +10,7 @@ const createOrderInfo = async (req, res) => {
       items,
     });
  
+    
     await newOrder.save();
     return res.status(201).json({
       success: true,
