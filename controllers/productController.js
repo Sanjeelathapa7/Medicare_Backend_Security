@@ -12,6 +12,7 @@ const createProduct = async (req, res) => {
         req.body;
     const { productImage } = req.files;
 
+    
     // step 3 : Validate data
     if (
         !productName ||
