@@ -59,6 +59,7 @@ const fetchAuditLogsByAction = async (req, res) => {
     }
 };
 
+
 module.exports = {
     fetchAllAuditLogs,
     fetchAuditLogsByUserId,
