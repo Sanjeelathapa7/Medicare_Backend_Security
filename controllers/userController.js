@@ -23,6 +23,7 @@ const mailConfig = () => {
       rejectUnauthorized: false, // Ignore SSL errors
     },
   });
+  
 
   return transporter;
 };
