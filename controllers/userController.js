@@ -4,15 +4,29 @@ const Users = require("../model/userModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-const randomstring = require("randomstring");
-const { resetCode, mailConfig } = require("../utils/resetPassword");
 const ResetCode = require("../model/resetcodeModel");
 const cloudinary = require("cloudinary");
 require('dotenv').config();
 
+const resetCode = Math.floor(1000 + Math.random() * 8000);
 
+const mailConfig = () => {
+  console.log(process.env.USEREMAIL);
+  console.log(process.env.PASSWORD);
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.USEREMAIL,
+      pass: process.env.PASSWORD,
+    },
+    tls: {
+      rejectUnauthorized: false, // Ignore SSL errors
+    },
+  });
 
-// Helper function to evaluate password strength
+  return transporter;
+};
+
 const evaluatePasswordStrength = (password) => {
   let strength = "Weak";
   const lengthRequirement = /.{8,12}/;
@@ -91,7 +105,10 @@ const createUser = async (req, res) => {
       lastName,
       email,
       password: hashedPassword,
-      passwordHistory: [hashedPassword],
+      passwordHistory: [{
+        password: hashedPassword,
+        changedAt: new Date()
+      }],
       lastPasswordChangeDate: new Date(),
     });
 
@@ -102,7 +119,7 @@ const createUser = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating user:", error);
-    res.status (500).json({
+    res.status(500).json({
       success: false,
       message: "Server Error",
     });
@@ -127,6 +144,92 @@ const loginUser = async (req, res) => {
       });
     }
 
+// Check if account is locked
+if (user.accountLocked) {
+  const lockoutDurationMillis = Date.now() - user.lastFailedLoginAttempt;
+  const lockoutDurationSeconds = lockoutDurationMillis / 1000; // convert to seconds
+
+  if (lockoutDurationSeconds >= 120) { // 2 minutes in seconds
+      // Unlock the account
+      user.accountLocked = false;
+      user.failedLoginAttempts = 0;
+      await user.save();
+  } else {
+      const timeRemainingSeconds = 120 - lockoutDurationSeconds;
+      const minutes = Math.floor(timeRemainingSeconds / 60);
+      const seconds = Math.floor(timeRemainingSeconds % 60);
+
+      return res.status(400).json({
+          success: false,
+          message: `Account is locked. Please try again later after ${minutes} minutes and ${seconds} seconds.`
+      });
+  }
+}
+  // Check password expiry
+  const checkPasswordExpiry = (user) => {
+    const passwordExpiryDays = 90; // Set the password expiry duration in days
+    const currentDate = new Date();
+    const lastPasswordChangeDate = user.passwordChangeDate || user.createdAt;
+
+    const daysSinceLastChange = Math.floor(
+        (currentDate - lastPasswordChangeDate) / (1000 * 60 * 60 * 24)
+    );
+
+    const daysRemaining = passwordExpiryDays - daysSinceLastChange;
+
+    if (daysRemaining <= 3 && daysRemaining > 0) {
+        const message = `Your password will expire in ${daysRemaining} days. Please change your password.`;
+        return {
+            expired: false,
+            daysRemaining: daysRemaining,
+            message: message
+          };
+        }
+
+        return {
+            expired: daysSinceLastChange >= passwordExpiryDays,
+            daysRemaining: daysRemaining,
+            message: null
+        };
+    };
+ // Compare password
+ const isPasswordValid = await bcrypt.compare(password, user.password);
+ if (!isPasswordValid) {
+     // Increment failed login attempts and update last failed login timestamp
+     user.failedLoginAttempts += 1;
+     user.lastFailedLoginAttempt = Date.now();
+
+     // Check if the maximum allowed failed attempts is reached
+     if (user.failedLoginAttempts >= 4) {
+         // Lock the account
+         user.accountLocked = true;
+         await user.save();
+         return res.json({
+             success: false,
+             message: "Account is locked. Please try again later."
+         });
+     }
+     await user.save();
+     return res.json({
+         success: false,
+         message: "Incorrect Password."
+     });
+ }
+
+ // Reset failed login attempts and last failed login timestamp on successful login
+ user.failedLoginAttempts = 0;
+ user.lastFailedLoginAttempt = null;
+ await user.save();
+
+ // Check if the account is still locked after successful login
+ if (user.accountLocked) {
+     return res.json({
+         success: false,
+         message: "Account is locked. Please try again later."
+     });
+ }
+
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({
@@ -135,7 +238,7 @@ const loginUser = async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ id: user._id, isAdmin: user.isAdmin }, process.env.JWT_SECRET, {
       expiresIn: "1h",
     });
 
@@ -157,66 +260,62 @@ const loginUser = async (req, res) => {
 
 const resetPassword = async (req, res) => {
   const UserData = req.body;
-  console.log(UserData);
+  console.log(UserData)
   const user = await Users.findOne({ email: UserData?.email });
   const OTP = resetCode;
-  console.log(user.id);
   console.log(OTP);
-  await ResetCode.findOneAndUpdate(
-    {
-      userId: user.id,
-    },
-    {
-      resetCode: OTP,
-    },
-    { upsert: true }
-  );
+  await ResetCode.findOneAndUpdate({
+    userId: user.id
+  }, {
+    resetCode: OTP
+  }, { upsert: true })
   console.log(user);
   const MailConfig = mailConfig();
 
   const mailOptions = {
-    from: "sanjeelathapamagar1234@gmail.com", // Replace with your email
+    from: 'Medicare', // Replace with your email
     to: UserData?.email,
-    subject: "Password Reset Code",
-    text: `Your password reset code is: ${OTP}`,
+    subject: 'Password Reset Code',
+    text: `Your password reset code is: ${OTP}`
   };
 
   try {
     await MailConfig.sendMail(mailOptions);
     return res.json({
       success: true,
-      message: "Reset code email sent successfully!",
-    });
+      message: "Reset code email sent successfully!"
+    })
     // console.log('Reset code email sent successfully!');
   } catch (error) {
-    console.log(error);
+    console.log(error)
     return res.json({
       success: false,
-      message: "Error sending reset code email:" + error.message,
-    });
+      message: 'Error sending reset code email:' + error.message,
+    })
   }
-};
+}
 
 const verifyResetCode = async (req, res) => {
+
   const { resetCode, email } = req.body;
   try {
     const user = await Users.findOne({ email });
     if (!user) {
       return res.json({
         success: false,
-        message: "User not found with the provided email.",
+        message: "User not found with the provided email."
       });
     } else {
       const savedResetCode = await ResetCode.findOne({ userId: user._id });
       if (!savedResetCode || savedResetCode.resetCode != resetCode) {
         return res.json({
           success: false,
-          message: "Invalid reset code.",
+          message: "Invalid reset code."
         });
       } else {
         return res.json({
           success: true,
-          message: "Reset code verified successfully.",
+          message: "Reset code verified successfully."
         });
       }
     }
@@ -224,10 +323,11 @@ const verifyResetCode = async (req, res) => {
     console.error("Error in verifyResetCode:", error);
     return res.json({
       success: false,
-      message: "Server Error: " + error.message,
+      message: 'Server Error: ' + error.message,
     });
-  } //set opt code null
+  }    //set opt code null
 };
+
 
 const updatePassword = async (req, res) => {
   const { email, password } = req.body;
@@ -238,39 +338,24 @@ const updatePassword = async (req, res) => {
     const randomSalt = await bcrypt.genSalt(10);
     const encryptedPassword = await bcrypt.hash(password, randomSalt);
 
-    const user = await Users.findOneAndUpdate({ email }, { password: encryptedPassword });
-
-    // Prevent password reuse by checking the history
-    if (user.passwordHistory.includes(encryptedPassword)) {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot reuse the previous passwords.",
-      });
-    }
-
-    // Update password history and ensure it stores only the last 5 passwords
-    user.passwordHistory.unshift(encryptedPassword);
-    if (user.passwordHistory.length > 5) {
-      user.passwordHistory.pop(); // Keep only last 5 passwords
-    }
-    user.lastPasswordChangeDate = new Date();
-
-    await user.save();
+    await Users.findOneAndUpdate({ email }, { password: encryptedPassword });
 
     return res.json({
       success: true,
-      message: "Password reset successfully.",
+      message: "Password reset successfully."
     });
+
   } catch (error) {
     console.log(error);
     return res.json({
       success: false,
-      message: "Server Error: " + error.message,
+      message: 'Server Error: ' + error.message,
     });
   }
 };
 
-//Profile
+
+// //Profile
 
 const getUserProfile = async (req, res) => {
   try {
@@ -308,7 +393,6 @@ const getUserProfile = async (req, res) => {
     });
   }
 };
-
 const updateUserProfile = async (req, res) => {
   console.log(req.files);
   try {
@@ -378,9 +462,6 @@ module.exports = {
   updatePassword,
   updateUserProfile,
   getUserProfile,
+  resetCode,
+  mailConfig,
 };
-
-
-
-
- 

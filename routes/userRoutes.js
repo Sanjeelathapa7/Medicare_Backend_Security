@@ -10,11 +10,9 @@ router.post('/register', userController.createUser)
 router.post('/login', userController.loginUser)
 
 //forget api 
-router.post('/resetpassword', userController.resetPassword);
-router.post('/resetcode', userController.verifyResetCode);
-router.post('/updatepassword', userController.updatePassword);
-router.get("/profile", userController.getUserProfile);
-router.put("/update_profile/:id", authGuard, userController.updateUserProfile);
+router.post('/reset_password', userController.resetPassword);
+router.post('/reset_code', userController.verifyResetCode);
+router.post('/update_password', userController.updatePassword);
 
 // exporting
 module.exports = router;
