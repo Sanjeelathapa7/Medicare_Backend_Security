@@ -13,6 +13,8 @@ router.post('/login', userController.loginUser)
 router.post('/reset_password', userController.resetPassword);
 router.post('/reset_code', userController.verifyResetCode);
 router.post('/update_password', userController.updatePassword);
+router.post('/change_password', userController.changePassword);
+
 
 // exporting
 module.exports = router;

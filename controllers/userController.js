@@ -165,7 +165,6 @@ if (user.accountLocked) {
       });
   }
 }
-  // Check password expiry
   const checkPasswordExpiry = (user) => {
     const passwordExpiryDays = 90; // Set the password expiry duration in days
     const currentDate = new Date();
@@ -192,16 +191,14 @@ if (user.accountLocked) {
             message: null
         };
     };
- // Compare password
+
+    
  const isPasswordValid = await bcrypt.compare(password, user.password);
  if (!isPasswordValid) {
-     // Increment failed login attempts and update last failed login timestamp
      user.failedLoginAttempts += 1;
      user.lastFailedLoginAttempt = Date.now();
 
-     // Check if the maximum allowed failed attempts is reached
      if (user.failedLoginAttempts >= 4) {
-         // Lock the account
          user.accountLocked = true;
          await user.save();
          return res.json({
@@ -329,28 +326,117 @@ const verifyResetCode = async (req, res) => {
 };
 
 
-const updatePassword = async (req, res) => {
-  const { email, password } = req.body;
-  // console.log(email, password);
+// const updatePassword = async (req, res) => {
+//   const { email, password } = req.body;
+//   // console.log(email, password);
+
+//   try {
+//     // Update the user's password
+//     const randomSalt = await bcrypt.genSalt(10);
+//     const encryptedPassword = await bcrypt.hash(password, randomSalt);
+
+//     await Users.findOneAndUpdate({ email }, { password: encryptedPassword });
+
+//     return res.json({
+//       success: true,
+//       message: "Password reset successfully."
+//     });
+
+//   } catch (error) {
+//     console.log(error);
+//     return res.json({
+//       success: false,
+//       message: 'Server Error: ' + error.message,
+//     });
+//   }
+// };
+const changePassword = async (req, res) => {
+  const { currentPassword, newPassword, confirmNewPassword } = req.body;
+
+  if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({ message: 'New passwords do not match' });
+  }
 
   try {
-    // Update the user's password
-    const randomSalt = await bcrypt.genSalt(10);
-    const encryptedPassword = await bcrypt.hash(password, randomSalt);
+      const user = await Users.findById(req.user.id);
 
-    await Users.findOneAndUpdate({ email }, { password: encryptedPassword });
+      if (!user) {
+          return res.status(404).json({ message: 'User not found' });
+      }
 
-    return res.json({
-      success: true,
-      message: "Password reset successfully."
-    });
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+
+      if (!isMatch) {
+          return res.status(400).json({ message: 'Current password is incorrect' });
+      }
+
+      // Check if the new password is in the password history
+      const isReused = await user.isPasswordInHistory(newPassword);
+      if (isReused) {
+          return res.status(400).json({ message: 'You cannot reuse a recent password. Please choose a different password.' });
+      }
+
+      // Hash the new password
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+      // Update the user's password history
+      await user.updatePasswordHistory(newPassword);
+
+      // Save the updated user document
+      user.lastPasswordChange = Date.now(); // Update the last password change date
+      await user.save();
+
+      res.status(200).json({ message: 'Password changed successfully' });
+  } catch (error) {
+      res.status(500).json({ message: 'Server error', error });
+  }
+};
+
+
+const updatePassword = async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+      // Find the user by email
+      const user = await Users.findOne({ email });
+
+      if (!user) {
+          return res.json({
+              success: false,
+              message: "User not found.",
+          });
+      }
+
+      // Check if the new password is in the user's password history
+      const isReused = await user.isPasswordInHistory(password);
+      if (isReused) {
+          return res.json({
+              success: false,
+              message: "You cannot reuse a recent password. Please choose a different password.",
+          });
+      }
+
+      // If not reused, proceed to update the password
+      const randomSalt = await bcrypt.genSalt(10);
+      const encryptedPassword = await bcrypt.hash(password, randomSalt);
+
+      // Update the user's password and add it to the password history
+      user.password = encryptedPassword;
+      await user.updatePasswordHistory(password);
+      await user.save();
+
+      return res.json({
+          success: true,
+          message: "Password reset successfully.",
+      });
 
   } catch (error) {
-    console.log(error);
-    return res.json({
-      success: false,
-      message: 'Server Error: ' + error.message,
-    });
+      console.log(error);
+      return res.json({
+          success: false,
+          message: 'Server Error: ' + error.message,
+      });
   }
 };
 
@@ -464,4 +550,9 @@ module.exports = {
   getUserProfile,
   resetCode,
   mailConfig,
+  changePassword,
 };
+
+
+
+
